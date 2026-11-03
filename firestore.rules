@@ -1,0 +1,66 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isFileOwner(fileData) {
+      return isAuthenticated() && fileData.ownerId == request.auth.uid;
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Files Collection with Sensitivity-Based Access Control
+    match /files/{fileId} {
+      // Read access policy:
+      // 1. Public files: Allowed for anyone (public share link verification)
+      // 2. Private & Confidential files: Strictly restricted to owner OR authorized shared users
+      allow read: if resource.data.sensitivity == 'public'
+                  || (isAuthenticated() && resource.data.ownerId == request.auth.uid)
+                  || (isAuthenticated() && request.auth.token.email in resource.data.sharedWithEmails);
+
+      // Create policy:
+      // Authenticated users can upload files where they are the owner and specify a valid sensitivity level
+      allow create: if isAuthenticated() 
+                    && request.resource.data.ownerId == request.auth.uid
+                    && request.resource.data.sensitivity in ['public', 'private', 'confidential'];
+
+      // Update / Delete policy:
+      // Only the file owner can modify metadata, rename, move, star, or delete
+      allow update, delete: if isFileOwner(resource.data);
+    }
+
+    // Folders Collection
+    match /folders/{folderId} {
+      allow read, update, delete: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+      allow create: if isAuthenticated() && request.resource.data.ownerId == request.auth.uid;
+    }
+
+    // Shares Collection
+    match /shares/{shareId} {
+      allow read: if isAuthenticated() && (
+        resource.data.ownerId == request.auth.uid || 
+        resource.data.sharedWith == request.auth.token.email
+      );
+      // Only file owner can create or revoke (delete) a share
+      allow create: if isAuthenticated() && request.resource.data.ownerId == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+    }
+
+    // Activities Collection (Audit Trail)
+    match /activities/{activityId} {
+      allow create: if isAuthenticated();
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+  }
+}

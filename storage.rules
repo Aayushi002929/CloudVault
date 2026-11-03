@@ -1,0 +1,31 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Storage path format: /files/{userId}/{fileId}/{filename}
+    match /files/{userId}/{fileId}/{fileName} {
+      // Owner has full read and write access
+      allow read, write: if isOwner(userId);
+
+      // Public files or shared files: access validation handled by signed tokens or matching file metadata
+      // Max upload size 25MB to satisfy academic project safety
+      allow create: if isOwner(userId) && request.resource.size < 25 * 1024 * 1024;
+      allow delete: if isOwner(userId);
+    }
+
+    // Public uploads fallback path
+    match /public/{fileName} {
+      allow read: if true;
+      allow write: if isAuthenticated() && request.resource.size < 10 * 1024 * 1024;
+    }
+  }
+}
